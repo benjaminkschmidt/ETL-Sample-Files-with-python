@@ -1,0 +1,47 @@
+from pprint import pprint
+
+import cassandra
+from cassandra.cluster import Cluster
+from cassandra import cqlengine as ce
+
+
+class ModelFactory:
+
+    @classmethod
+    def create(cls, attrs):
+        assert isinstance(attrs, dict)
+
+        for a in attrs:
+            setattr(cls, a, attrs[a])
+
+        return cls
+
+cluster = Cluster(['10.41.49.1'])
+session = cluster.connect('dev_datalake')
+session.row_factory = cassandra.query.dict_factory
+CREATE TABLE IF NOT EXISTS keyspace_name.combined_address(
+	Address_ID int PRIMARYKEY,
+	Source_ID text,
+	Address text,
+	Data_Source text,
+);
+CREATE Table IF Not EXISTS keyspace_name.combined_names(
+	Name_ID int PRIMARYKEY,
+	Source_ID text,
+	Full_Name text,
+	Data_Source text,
+);
+CREATE Table IF Not EXISTS keyspace_name.combined_emails(
+	Email_ID int PRIMARYKEY,
+	Source_ID text,
+	Email text,
+	Email_Type text,
+	Data_Source text,
+);
+CREATE Table IF Not EXISTS keyspace_name.combined_phoneNumbers(
+	Telephone_ID int PRIMARYKEY,
+	Source_ID text,
+	Phone_Numbers text,
+	Phone_Type text,
+	Data_Source text,
+);
