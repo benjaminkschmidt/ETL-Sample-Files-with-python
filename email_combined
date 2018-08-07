@@ -1,0 +1,152 @@
+%spark.pyspark
+
+from __future__ import division, print_function
+
+import re
+
+import numpy as npdata
+import pandas as pd
+import pyspark.sql.functions as sf
+from pyspark import SparkContext, SparkConf
+from pyspark.sql import HiveContext
+from pyspark.sql.types import *
+from cassandra import cqlengine as ce
+% spark.pyspark
+
+quote_re = re.compile(r"\"")
+
+
+def clean_quotes(in_value):
+    """Helper function for cleaning quotes and default spaces from Advance data.
+    """
+    _out_value = in_value
+
+    try:
+        _out_value = quote_re.sub('', in_value)  # .strip()
+    except TypeError:
+        pass
+
+    return _out_value
+
+
+def safe_concat(df, column, postfix):
+    _col = sf.when(df[column] != ' ', sf.concat(df[column], sf.lit(postfix))).otherwise('').alias(column)
+    return _col
+%spark.pyspark
+
+conf = SparkConf() \
+        .setAppName('Zeppelin') \
+        .set('spark.cassandra.connection.host','10.41.49.1') \
+        .set('spark.master', 'yarn-client')
+
+sc = SparkContext.getOrCreate(conf=conf)
+
+hive_context = HiveContext(sc)
+#hive queries
+%spark.pyspark
+
+ad_addr_query = " SELECT SAMAccountName" \
+                "   , Office" \
+                "   , StreetAddress" \
+                "   , POBox" \
+                "   , City" \
+                "   , State" \
+                "   , Country" \
+                "   , PostalCode" \
+                " FROM data_lake.ad_data_raw"
+
+advance_addr_query = " SELECT ID_Number" \
+                     "   , Addr_Type_Code" \
+                     "   , Addr_Status_Code" \
+                     "   , Addr_Pref_Ind" \
+                     "   , Company_Name_1" \
+                     "   , Company_Name_2" \
+                     "   , Street1" \
+                     "   , Street2" \
+                     "   , Street3" \
+                     "   , City" \
+                     "   , State_Code" \
+                     "   , Zipcode" \
+                     "   , Foreign_Cityzip" \
+                     "   , Country_Code" \
+                     " FROM data_lake.advance_address_view" \
+                     " WHERE Addr_Status_Code = '\"A\"'"
+%spark.pyspark
+
+ad_email = hive_context.sql(ad_addr_query)
+
+advance_email = hive_context.sql(advance_addr_query)
+%md
+
+## Clean up Advance data
+
+The data coming in from Advance has double quotes around each field. We need to clean them up. We use Pandas for this part because it has a handy `applymap` method that works elementwise.
+% spark.pyspark
+
+advance_addr_pd = advance_address.toPandas()
+advance_addr_pd_clean = advance_addr_pd.applymap(lambda x: clean_quotes(x))
+adv_addr_clean = hive_context.createDataFrame(advance_addr_pd_clean)
+%spark.pyspark
+
+ad_full_address = (ad_address
+    .withColumn('Full_Address',
+                sf.rtrim(
+                    sf.concat(
+                        safe_concat(ad_address, 'Office', ' '),
+                        safe_concat(ad_address, 'StreetAddress', ', '),
+                        safe_concat(ad_address, 'POBox', ', '),
+                        safe_concat(ad_address, 'City', ', '),
+                        safe_concat(ad_address, 'State', ' '),
+                        safe_concat(ad_address, 'PostalCode', ''))))
+    .withColumn('Addr_Type_Code',
+                sf.lit(''))
+    .withColumn('Data_Source',
+                sf.lit('ActiveDirectory'))
+    .select(
+        sf.col('SAMAccountName').alias('NetID'),
+        sf.col('SAMAccountName').alias('Source_ID'),
+        sf.col('Addr_Type_Code'),
+        sf.col('Full_Address'),
+        sf.col('Data_Source')))
+% spark.pyspark
+
+advance_full_address = (adv_addr_clean
+    .withColumn('Full_Address',
+                sf.rtrim(
+                    sf.concat(
+                        safe_concat(adv_addr_clean, 'Company_Name_1', ', '),
+                        safe_concat(adv_addr_clean, 'Company_Name_2', ', '),
+
+                        safe_concat(adv_addr_clean, 'Street1', ', '),
+                        safe_concat(adv_addr_clean, 'Street2', ', '),
+                        safe_concat(adv_addr_clean, 'Street3', ', '),
+
+                        safe_concat(adv_addr_clean, 'City', ', '),
+                        safe_concat(adv_addr_clean, 'State_Code', ' '),
+                        safe_concat(adv_addr_clean, 'Zipcode', ' '),
+
+                        safe_concat(adv_addr_clean, 'Foreign_Cityzip', ' '),
+                        safe_concat(adv_addr_clean, 'Country_Code', ''))))
+    .withColumn('Data_Source',
+                sf.lit('Advance'))
+    .withColumn('NetID',
+                sf.lit(''))
+    .select(
+    sf.col('NetID'),
+    sf.col('ID_Number').alias('Source_ID'),
+    sf.col('Addr_Type_Code'),
+    sf.col('Full_Address'),
+    sf.col('Data_Source')))
+%spark.pyspark
+
+combined_address = (advance_full_address
+    .unionAll(ad_full_address)
+    .withColumn('Address_ID',
+                sf.monotonically_increasing_id())
+    .select(
+        'Address_ID',
+        'NetID',
+        'Source_ID',
+        'Addr_Type_Code',
+        'Full_Address',
+        'Data_Source'))
